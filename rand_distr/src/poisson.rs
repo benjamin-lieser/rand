@@ -9,7 +9,7 @@
 
 //! The Poisson distribution `Poisson(λ)`.
 
-use crate::{Cauchy, Distribution, Standard};
+use crate::{Cauchy, Distribution, Standard, StandardNormal};
 use core::fmt;
 use num_traits::{Float, FloatConst};
 use rand::Rng;
@@ -104,6 +104,7 @@ impl<F> Distribution<F> for Poisson<F>
 where
     F: Float + FloatConst,
     Standard: Distribution<F>,
+    StandardNormal: Distribution<F>,
 {
     #[inline]
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> F {
@@ -121,6 +122,16 @@ where
         }
         // high expected values - rejection method
         else {
+
+            // these values of lambda can lead to numerical problems and we can do the normal approximation
+            if self.lambda > F::from(1e30).unwrap() {
+                // https://www.johndcook.com/blog/normal_approx_to_poisson/ gives an upper bound to the error in the pdf to be smaller than 1/sqrt(lambda)
+
+                // normal approximation
+                let normal = crate::Normal::new(self.lambda, self.lambda.sqrt()).unwrap();
+                return normal.sample(rng).round();
+            }
+
             // we use the Cauchy distribution as the comparison distribution
             // f(x) ~ 1/(1+x^2)
             let cauchy = Cauchy::new(F::zero(), F::one()).unwrap();
@@ -171,6 +182,7 @@ mod test {
     fn test_poisson_avg_gen<F: Float + FloatConst>(lambda: F, tol: F)
     where
         Standard: Distribution<F>,
+        StandardNormal: Distribution<F>,
     {
         let poisson = Poisson::new(lambda).unwrap();
         let mut rng = crate::test::rng(123);
@@ -193,6 +205,11 @@ mod test {
         // Small lambda will use Knuth's method with exp_lambda == 1.0
         test_poisson_avg_gen::<f32>(0.00000000000000005, 0.1);
         test_poisson_avg_gen::<f64>(0.00000000000000005, 0.1);
+        
+        // Very large lambda
+        let poisson = Poisson::new(1e300).unwrap();
+        // Any value which is not the mean should be very very unlikely (the standard deviation is 1e150) and therefore does not influence the average
+        assert!(poisson.sample(&mut crate::test::rng(123))  == 1e300);
     }
 
     #[test]
